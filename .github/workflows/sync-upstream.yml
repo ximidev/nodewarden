@@ -19,6 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          token: ${{ secrets.PAT_TOKEN }}  # ← 使用 PAT
           fetch-depth: 0
 
       - name: Configure git
@@ -38,7 +39,6 @@ jobs:
           MANUAL_INPUT="${{ github.event.inputs.target_commit }}"
 
           if [ "$TRIGGER" = "schedule" ]; then
-            # Auto mode: resolve latest upstream release tag
             LATEST_TAG=$(curl -s https://api.github.com/repos/shuaiplus/NodeWarden/releases/latest | jq -r .tag_name)
             if [ "$LATEST_TAG" = "null" ] || [ -z "$LATEST_TAG" ]; then
               echo "No release found in upstream."
@@ -55,7 +55,6 @@ jobs:
             echo "Auto mode — latest release: $LATEST_TAG ($TARGET_SHA)"
 
           elif [ -n "$MANUAL_INPUT" ]; then
-            # Manual mode: use provided commit hash or tag
             TARGET_SHA=$(git rev-parse "$MANUAL_INPUT" 2>/dev/null)
             if [ -z "$TARGET_SHA" ]; then
               echo "Cannot resolve '$MANUAL_INPUT' to a commit."
@@ -66,7 +65,6 @@ jobs:
             echo "Manual mode — target: $MANUAL_INPUT ($TARGET_SHA)"
 
           else
-            # Manual mode, blank input: use latest commit on upstream/main
             TARGET_SHA=$(git rev-parse upstream/main)
             echo "mode=manual" >> $GITHUB_OUTPUT
             echo "target_sha=$TARGET_SHA" >> $GITHUB_OUTPUT
@@ -80,7 +78,6 @@ jobs:
           MODE="${{ steps.resolve.outputs.mode }}"
 
           if [ "$MODE" = "manual" ]; then
-            # Manual: skip only if HEAD is exactly this commit
             CURRENT_SHA=$(git rev-parse HEAD)
             if [ "$CURRENT_SHA" = "$TARGET_SHA" ]; then
               echo "Already at $TARGET_SHA — skipping."
@@ -90,7 +87,6 @@ jobs:
               echo "needs_update=true" >> $GITHUB_OUTPUT
             fi
           else
-            # Auto: skip if target is already in ancestry
             if git merge-base --is-ancestor "$TARGET_SHA" HEAD 2>/dev/null; then
               echo "Already up to date with $TARGET_SHA — skipping."
               echo "needs_update=false" >> $GITHUB_OUTPUT
@@ -107,7 +103,6 @@ jobs:
           MODE="${{ steps.resolve.outputs.mode }}"
           git checkout main
           if [ "$MODE" = "manual" ]; then
-            # Hard reset allows both upgrade and rollback
             git reset --hard "$TARGET_SHA"
           else
             git merge "$TARGET_SHA" --no-edit
@@ -116,7 +111,6 @@ jobs:
       - name: Restore workflow file
         if: steps.check.outputs.needs_update == 'true'
         run: |
-          # Always keep our own workflow file, never let upstream overwrite it
           git checkout HEAD@{1} -- .github/workflows/sync-upstream.yml 2>/dev/null || true
           if ! git diff --cached --quiet; then
             git commit -m "chore: restore sync-upstream workflow after sync"
